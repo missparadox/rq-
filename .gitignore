@@ -1,0 +1,20 @@
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Generated reports
+reports/
+
+# Local env/config
+.env
+.env.*

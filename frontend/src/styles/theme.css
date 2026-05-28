@@ -1,0 +1,13 @@
+:root {
+  --bg: #f4efe6;
+  --bg-accent: #e7ddcf;
+  --panel: rgba(255, 252, 246, 0.88);
+  --panel-border: rgba(41, 29, 17, 0.12);
+  --text: #24160d;
+  --muted: #6a5544;
+  --accent: #b44f2b;
+  --accent-strong: #8b3115;
+  --shadow: 0 24px 60px rgba(59, 37, 23, 0.12);
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  --font-body: "Avenir Next", "Segoe UI", sans-serif;
+}

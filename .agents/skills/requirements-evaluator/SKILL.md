@@ -1,0 +1,130 @@
+---
+name: requirements-evaluator
+description: Evaluate requirement or design documents stored in Excel or JSON files: build split or full review packets, score explicit OR/DR evidence with the current model, and produce a Chinese quality report.
+---
+
+# Requirements Evaluator
+
+Evaluate explicit evidence, not presumed intent. Scripts normalize evidence and
+aggregate results; the model makes the quality judgment.
+
+## Default Split Workflow
+
+Use this workflow for normal standalone evaluation:
+
+1. Resolve the input file and artifact directory.
+   Supported inputs are `.xlsx`, `.xlsm`, and `.json`.
+   Use `reports/<input-file-stem>/` by default. If non-ASCII paths are
+   unreliable in the active terminal, use an explicit ASCII artifact directory.
+
+2. Generate self-contained OR packets:
+
+   ```bash
+   python3 .agents/skills/requirements-evaluator/scripts/evaluate_requirements.py \
+     --input /path/to/input-file.xlsx \
+     --packet-scope all-or \
+     --format markdown
+   ```
+
+   Consume the ASCII JSON manifest emitted by the script. Use its `index_path`
+   and `packet_files`; do not scan `reports/` to rediscover outputs.
+
+3. Read the returned `index_path`, then review exactly one generated
+   `or-*.md` packet at a time.
+   Each packet contains the compact scoring anchors, red-line caps, and result
+   contract required to evaluate that OR. Do not load scoring references in
+   this path.
+
+4. Save one structured result immediately after reviewing each OR:
+
+   ```text
+   reports/<input-file-stem>/results/<same-packet-filename>
+   ```
+
+   Use the tagged-text contract embedded in the packet. Complete every numeric
+   dimension line; do not use `N/A`, `null`, or omit dimensions. Keep split
+   results compact: one short evidence phrase per dimension, one-sentence
+   conclusion, and at most two items per list. Do not output totals or grades;
+   the aggregation script recomputes them from dimension scores.
+
+5. Aggregate all saved OR results locally:
+
+   ```bash
+   python3 .agents/skills/requirements-evaluator/scripts/aggregate_or_results.py \
+     --input /path/to/input-file.xlsx \
+     --results-dir reports/<input-file-stem>/results \
+     --output reports/<input-file-stem>/report.md
+   ```
+
+6. Return a concise summary and the final report path. Once the user requested
+   an evaluation, do not stop at packet generation, a preview, or a plan.
+
+## Full-Context Exception
+
+Use a one-shot full-context review only when the user explicitly requests it
+and the whole input comfortably fits the model context.
+
+Execute this workflow without reading implementation source:
+
+1. Generate the full review packet:
+
+   ```bash
+   python3 .agents/skills/requirements-evaluator/scripts/evaluate_requirements.py \
+     --input /path/to/input-file.xlsx \
+     --packet-scope full \
+     --format markdown
+   ```
+
+   The default output is `reports/<input-file-stem>/full-packet.md`.
+
+2. Read exactly these inputs for scoring and report generation:
+
+   - [references/default-rubric.md](references/default-rubric.md)
+   - [references/report-template.md](references/report-template.md)
+   - `reports/<input-file-stem>/full-packet.md`
+
+3. Produce the final Chinese Markdown report at
+   `reports/<input-file-stem>/report.md` and return its path with a concise
+   summary.
+
+`default-rubric.md` is the single reference for full-mode dimensions, scoring
+anchors, and red-line caps. Split review uses the compact equivalent embedded
+in each generated packet.
+
+During a normal full-context evaluation, do not read script source, tests,
+metadata, project documentation, integration code, or unrelated application
+source. Read source only if packet generation fails and the emitted error is
+insufficient to diagnose the failure.
+
+## Guardrails
+
+- The skill has already been loaded. Do not search for its directory.
+- In default split mode, do not read script source, tests, metadata, project
+  documentation, integration code, unrelated application source, or
+  `references/*.md` before execution.
+- In full-context mode, do not read implementation or unrelated project source
+  before execution; only load the two references and generated full packet
+  listed above.
+- Only score OR units whose `需求分类` is `功能`; other categories are reported
+  statistically but do not participate in scoring.
+- Base scores on evidence in the current OR packet only. Treat external
+  references, absent diagrams, or unresolved “如下图” content as missing.
+- Do not keep multiple OR packets in active context or reload completed packets
+  unless validation fails.
+- Do not ask the model to merge the final split report; the aggregate script
+  performs that deterministic step.
+
+## Portability And Dependencies
+
+- Use commands valid for the active shell. In Bash, do not run PowerShell
+  `Get-ChildItem` or Windows `dir /s /b`.
+- `.json` needs no extra package. `.xlsx` and `.xlsm` require `openpyxl`.
+- If a dependency is missing, follow the install command printed by
+  `evaluate_requirements.py`, then rerun packet generation.
+
+## Script Roles
+
+- `scripts/evaluate_requirements.py`: generates split packets and embeds the
+  compact split scoring contract.
+- `scripts/aggregate_or_results.py`: validates per-OR results, recomputes
+  totals, and renders the default split-mode final report.

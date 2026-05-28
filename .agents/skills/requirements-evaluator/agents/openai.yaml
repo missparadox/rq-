@@ -1,0 +1,4 @@
+interface:
+  display_name: "Requirements Evaluator"
+  short_description: "Score requirement docs and surface quality gaps."
+  default_prompt: "Use $requirements-evaluator. Build split packets with scripts/evaluate_requirements.py, review exactly one or-*.md packet at a time with compact tagged results, omit computed totals and grades, save one per-OR result file under reports/<input-stem>/results/, then run scripts/aggregate_or_results.py to generate reports/<input-stem>/report.md. Do not inspect unrelated project or integration source during normal evaluation."
