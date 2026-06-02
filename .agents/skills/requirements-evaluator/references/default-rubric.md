@@ -33,6 +33,9 @@ the compact scoring standard required for their single OR.
 - If a value, scenario, constraint, verification method, or failure behavior is not stated, score the gap rather than inferring intent.
 - Treat unresolved external references, figures, or “如下图” text as missing evidence.
 - Use a short evidence-based reason per dimension.
+- OR dimensions use only OR core fields and OR additional fields. DR details must not raise OR dimension scores; DR evidence is used only for DR dimensions and OR-to-DR decomposition or traceability dimensions.
+- OR-用户语言描述 evaluates whether the OR expresses the request in requirement-side language that non-technical stakeholders can understand. If the OR is mainly technical implementation or solution detail and the requirement meaning must be inferred from that implementation, cap this dimension at `<= 6/12`.
+- OR-约束和限制 evaluates whether the OR states the boundary conditions under which the requirement applies. If the OR describes only functional capability with no scope, prerequisite, or limitation, cap this dimension at `<= 2/6`.
 
 ## Dimension Anchors
 
@@ -68,9 +71,12 @@ When a red line triggers, identify its rule ID and cap basis in the result.
 1. Identify each scored OR and all of its linked DRs from the expanded packet.
 2. Score the OR once, each DR once, and the OR-to-DR decomposition once.
 3. Apply the anchors and red-line caps before finalizing each OR result.
-4. Produce the report using `report-template.md`, including all OR units,
-   overall score, grade distribution, red lines, blockers, missing items, and
-   revision actions.
+4. Produce the report using `report-template.md`. All scored OR units must
+   participate in totals, grade distribution, category statistics, and the
+   full OR summary table. Only expand detailed OR evaluations for the
+   five lowest-scoring ORs and the single highest-scoring OR. If the selected
+   sets overlap, do not duplicate the OR. For ties, keep the original OR order.
+   Do not include revision-action sections unless explicitly requested.
 
 ## Quality Signals
 

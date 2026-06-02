@@ -240,6 +240,8 @@ class RequirementsEvaluatorPacketTests(unittest.TestCase):
         self.assertEqual(per_or["or_packets"][0]["fallback_output_contract"]["markers"]["start"], "[OR_RESULT_START]")
         self.assertEqual(per_or["or_packets"][0]["expected_output_schema"]["optional_but_supported"], [])
         self.assertEqual(per_or["or_packets"][0]["fallback_output_contract"]["optional_scalar_fields"], [])
+        self.assertNotIn("revision_actions", per_or["or_packets"][0]["expected_output_schema"]["required"])
+        self.assertNotIn("revision_actions", per_or["or_packets"][0]["fallback_output_contract"]["required_list_fields"])
         self.assertNotIn("dr_score_line_pattern", per_or["or_packets"][0]["fallback_output_contract"])
         self.assertIn("dr_score", per_or["or_packets"][0]["fallback_output_contract"]["computed_by_aggregator"])
 
@@ -269,6 +271,11 @@ class RequirementsEvaluatorPacketTests(unittest.TestCase):
 
         self.assertIn("# 单OR评审任务包", rendered)
         self.assertIn("## 评分与输出约束", rendered)
+        self.assertIn("### 证据边界", rendered)
+        self.assertIn("OR四维仅使用OR核心字段和OR附加字段评分", rendered)
+        self.assertIn("DR细节不得补高OR", rendered)
+        self.assertIn("OR-用户语言描述：看OR是否以需求侧可理解的语言表达诉求", rendered)
+        self.assertIn("OR-约束和限制：看OR是否说明需求成立的范围、前提或限制", rendered)
         self.assertIn("| OR-用户价值/10 | 满足=价值或合规动机明确；缺失=仅功能描述 |", rendered)
         self.assertIn("| DR-可测试性/10 | 满足=可直接导出验收；缺失=无法验证 |", rendered)
         self.assertIn("| 需求映射一致性/7 | 满足=OR/DR一致；缺失=映射冲突 |", rendered)
@@ -276,11 +283,16 @@ class RequirementsEvaluatorPacketTests(unittest.TestCase):
         self.assertIn("R1: OR 未显式写出用户价值、业务目的或合规动机 -> `OR部分 <= 24/40`", rendered)
         self.assertIn("R5: 多个 DR 明显重复、冲突或无法追溯回 OR -> `分解与追踪质量 <= 8/20`", rendered)
         self.assertIn("仅输出下方 tagged 结果", rendered)
-        self.assertIn("每条 `<短证据>` 建议不超过20字", rendered)
+        self.assertIn("全量维度只返回分数", rendered)
+        self.assertIn("仅对得分率最低的2-3个维度单独说明", rendered)
         self.assertIn("[OR_RESULT_START]", rendered)
         self.assertNotIn("dr_score.DDR-1", rendered)
         self.assertNotIn("OR总分槽位", rendered)
-        self.assertIn("dr_dimension.DDR-1.DR-无歧义性: <0-8>/<8> | <短证据>", rendered)
+        self.assertIn("dr_dimension.DDR-1.DR-无歧义性: <0-8>/<8>", rendered)
+        self.assertNotIn("dr_dimension.DDR-1.DR-无歧义性: <0-8>/<8> | <短证据>", rendered)
+        self.assertIn("lowest_dimension_explanations:", rendered)
+        self.assertIn("DR.<dr_id>.<维度名>: <score>/<max> | <扣分说明>", rendered)
+        self.assertNotIn("revision_actions:", rendered)
         self.assertIn("## OR核心字段", rendered)
 
     def test_render_single_or_packet_markdown_keeps_dr_extra_non_empty_fields(self):
@@ -632,7 +644,7 @@ class RequirementsEvaluatorPacketTests(unittest.TestCase):
 
         message = str(ctx.exception)
         self.assertIn("openpyxl", message)
-        self.assertIn("python3 -m pip install openpyxl", message)
+        self.assertIn(f"{self.module.sys.executable} -m pip install openpyxl", message)
 
 
 if __name__ == "__main__":

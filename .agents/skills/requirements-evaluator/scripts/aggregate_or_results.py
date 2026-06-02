@@ -13,6 +13,7 @@ import evaluate_requirements as packet_builder
 
 LIST_FIELDS = (
     "triggered_red_line_rules",
+    "lowest_dimension_explanations",
     "blocking_issues",
     "key_evidence",
     "red_flags",
@@ -157,8 +158,12 @@ def parse_tagged_text(text: str) -> dict | None:
             continue
         current_list = None
 
+        dimension_reason = r"(?:\s*\|\s*(.+))?"
+
         or_dimension_match = re.match(
-            r"^or_dimension\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*(.+)$",
+            r"^or_dimension\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)"
+            + dimension_reason
+            + r"$",
             line,
         )
         if or_dimension_match:
@@ -167,13 +172,15 @@ def parse_tagged_text(text: str) -> dict | None:
                     "name": packet_builder.clean_text(or_dimension_match.group(1)),
                     "score": float(or_dimension_match.group(2)),
                     "max_score": float(or_dimension_match.group(3)),
-                    "reason": packet_builder.clean_text(or_dimension_match.group(4)),
+                    "reason": packet_builder.clean_text(or_dimension_match.group(4) or ""),
                 }
             )
             continue
 
         dr_dimension_match = re.match(
-            r"^dr_dimension\.([^.]+)\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*(.+)$",
+            r"^dr_dimension\.([^.]+)\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)"
+            + dimension_reason
+            + r"$",
             line,
         )
         if dr_dimension_match:
@@ -183,13 +190,15 @@ def parse_tagged_text(text: str) -> dict | None:
                     "name": packet_builder.clean_text(dr_dimension_match.group(2)),
                     "score": float(dr_dimension_match.group(3)),
                     "max_score": float(dr_dimension_match.group(4)),
-                    "reason": packet_builder.clean_text(dr_dimension_match.group(5)),
+                    "reason": packet_builder.clean_text(dr_dimension_match.group(5) or ""),
                 }
             )
             continue
 
         cross_dimension_match = re.match(
-            r"^cross_dimension\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*(.+)$",
+            r"^cross_dimension\.(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)"
+            + dimension_reason
+            + r"$",
             line,
         )
         if cross_dimension_match:
@@ -198,7 +207,7 @@ def parse_tagged_text(text: str) -> dict | None:
                     "name": packet_builder.clean_text(cross_dimension_match.group(1)),
                     "score": float(cross_dimension_match.group(2)),
                     "max_score": float(cross_dimension_match.group(3)),
-                    "reason": packet_builder.clean_text(cross_dimension_match.group(4)),
+                    "reason": packet_builder.clean_text(cross_dimension_match.group(4) or ""),
                 }
             )
             continue
@@ -233,7 +242,7 @@ def normalize_dimension_entries(
             "name": name,
             "score": coerce_score(entry.get("score")),
             "max_score": max_score,
-            "reason": packet_builder.clean_text(str(entry.get("reason", ""))) or "未提供",
+            "reason": packet_builder.clean_text(str(entry.get("reason", ""))),
         }
     normalized = []
     for name, max_score in expected.items():
@@ -244,11 +253,68 @@ def normalize_dimension_entries(
                     "name": name,
                     "score": None,
                     "max_score": max_score,
-                    "reason": "未提供",
+                    "reason": "",
                 },
             )
         )
     return normalized
+
+
+def parse_lowest_dimension_explanations(items: Sequence[str]) -> Dict[tuple, str]:
+    explanations = {}
+    score_pattern = r"[0-9]+(?:\.[0-9]+)?\s*/\s*[0-9]+(?:\.[0-9]+)?"
+    for item in items:
+        text = packet_builder.clean_text(item)
+        if not text:
+            continue
+
+        match = re.match(rf"^OR\.(.+?):\s*{score_pattern}\s*\|\s*(.+)$", text, flags=re.I)
+        if match:
+            explanations[("or", packet_builder.clean_text(match.group(1)))] = packet_builder.clean_text(
+                match.group(2)
+            )
+            continue
+
+        match = re.match(rf"^DR\.([^.]+)\.(.+?):\s*{score_pattern}\s*\|\s*(.+)$", text, flags=re.I)
+        if match:
+            explanations[
+                (
+                    "dr",
+                    packet_builder.clean_text(match.group(1)),
+                    packet_builder.clean_text(match.group(2)),
+                )
+            ] = packet_builder.clean_text(match.group(3))
+            continue
+
+        match = re.match(rf"^(?:CROSS|分解)\.(.+?):\s*{score_pattern}\s*\|\s*(.+)$", text, flags=re.I)
+        if match:
+            explanations[("cross", packet_builder.clean_text(match.group(1)))] = packet_builder.clean_text(
+                match.group(2)
+            )
+    return explanations
+
+
+def apply_lowest_dimension_explanations(result: dict, explanation_items: Sequence[str]) -> dict:
+    explanations = parse_lowest_dimension_explanations(explanation_items)
+    if not explanations:
+        return result
+
+    for item in result["or_part"]["dimension_scores"]:
+        reason = explanations.get(("or", item["name"]))
+        if reason:
+            item["reason"] = reason
+
+    for dr_part in result["dr_parts"]:
+        for item in dr_part["dimension_scores"]:
+            reason = explanations.get(("dr", dr_part["dr_id"], item["name"]))
+            if reason:
+                item["reason"] = reason
+
+    for item in result["decomposition_quality"]["dimension_scores"]:
+        reason = explanations.get(("cross", item["name"]))
+        if reason:
+            item["reason"] = reason
+    return result
 
 
 def build_group_maps(group: dict) -> Dict[str, dict]:
@@ -358,7 +424,7 @@ def normalize_json_result(data: dict, group: dict, catalog: Dict[str, Dict[str, 
             }
         )
 
-    return {
+    result = {
         "or_id": packet_builder.clean_text(str(data.get("or_id") or group["id"])),
         "or_name": packet_builder.clean_text(str(data.get("or_name") or group["name"])),
         "or_total_score": None,
@@ -435,6 +501,10 @@ def normalize_json_result(data: dict, group: dict, catalog: Dict[str, Dict[str, 
             },
         },
     }
+    lowest_explanations = data.get("lowest_dimension_explanations", [])
+    if isinstance(lowest_explanations, list):
+        result = apply_lowest_dimension_explanations(result, normalize_list_value(lowest_explanations))
+    return result
 
 
 def normalize_tagged_result(parsed: dict, group: dict, catalog: Dict[str, Dict[str, float]]) -> dict:
@@ -455,7 +525,7 @@ def normalize_tagged_result(parsed: dict, group: dict, catalog: Dict[str, Dict[s
                 "dimension_scores": normalize_dimension_entries(parsed["dr_dimensions"].get(dr_id, []), catalog["dr"]),
             }
         )
-    return {
+    result = {
         "or_id": packet_builder.clean_text(scalar.get("or_id") or group["id"]),
         "or_name": packet_builder.clean_text(scalar.get("or_name") or group["name"]),
         "or_total_score": None,
@@ -492,6 +562,10 @@ def normalize_tagged_result(parsed: dict, group: dict, catalog: Dict[str, Dict[s
             "dr_part_scores": dict(parsed["dr_scores"]),
         },
     }
+    return apply_lowest_dimension_explanations(
+        result,
+        normalize_list_value(parsed["lists"].get("lowest_dimension_explanations", [])),
+    )
 
 
 def recompute_aggregate_scores(result: dict) -> dict:
@@ -704,85 +778,95 @@ def render_category_table(review_packet: Dict[str, object]) -> List[str]:
     return lines
 
 
-def build_dr_summary(dr_part: dict, result_warnings: Sequence[str]) -> str:
-    if dr_part["score"] is None:
-        for warning in result_warnings:
-            if dr_part["dr_id"] in warning:
-                return "该DR评分结果不完整；" + warning
-        return "该DR未返回有效评分结果。"
-
-    scored_dimensions = [
-        item
-        for item in dr_part["dimension_scores"]
-        if item["score"] is not None and item["max_score"] not in (None, 0)
-    ]
-    if not scored_dimensions:
-        return "该DR已返回总分，但缺少可解释的维度细项。"
-
-    ratios = [
-        (
-            float(item["score"]) / float(item["max_score"]),
-            item["name"],
-            item["reason"],
-        )
-        for item in scored_dimensions
-    ]
-    ratios.sort()
-    weakest_ratio, weakest_name, weakest_reason = ratios[0]
-    strongest_ratio, strongest_name, strongest_reason = ratios[-1]
-
-    warning_text = ""
-    related_warnings = [warning for warning in result_warnings if dr_part["dr_id"] in warning]
-    if related_warnings:
-        warning_text = "；结果完整性异常"
-
-    if weakest_ratio <= 0.4 and strongest_ratio >= 0.75:
-        return f"强项在{strongest_name}，短板在{weakest_name}；{weakest_reason}{warning_text}"
-    if weakest_ratio <= 0.4:
-        return f"主要短板在{weakest_name}；{weakest_reason}{warning_text}"
-    if strongest_ratio >= 0.75:
-        return f"整体较完整，强项在{strongest_name}；{strongest_reason}{warning_text}"
-    return f"维度表现中等，最需关注{weakest_name}；{weakest_reason}{warning_text}"
-
-
-def render_dimension_rows(result: dict) -> List[str]:
-    rows = []
+def collect_dimension_focus_items(result: dict) -> List[dict]:
+    focus_items = []
     for item in result["or_part"]["dimension_scores"]:
-        rows.append(f"| {item['name']} | {format_score(item['score'], item['max_score'])} | {item['reason']} |")
-    for dr_part in result["dr_parts"]:
-        rows.append(
-            f"| DR `{dr_part['dr_id']} {dr_part['dr_name']}` 总分 | {format_score(dr_part['score'], 40)} | {build_dr_summary(dr_part, result.get('result_warnings', []))} |"
+        focus_items.append(
+            {
+                "scope": "OR",
+                "subject": result["or_name"],
+                "name": item["name"],
+                "score": item["score"],
+                "max_score": item["max_score"],
+                "reason": item["reason"],
+            }
         )
+    for dr_part in result["dr_parts"]:
         for item in dr_part["dimension_scores"]:
-            rows.append(
-                f"| ├ {item['name']} | {format_score(item['score'], item['max_score'])} | {item['reason']} |"
+            focus_items.append(
+                {
+                    "scope": "DR",
+                    "subject": f"{dr_part['dr_id']} {dr_part['dr_name']}",
+                    "name": item["name"],
+                    "score": item["score"],
+                    "max_score": item["max_score"],
+                    "reason": item["reason"],
+                }
             )
     for item in result["decomposition_quality"]["dimension_scores"]:
-        rows.append(f"| {item['name']} | {format_score(item['score'], item['max_score'])} | {item['reason']} |")
+        focus_items.append(
+            {
+                "scope": "分解",
+                "subject": result["or_name"],
+                "name": item["name"],
+                "score": item["score"],
+                "max_score": item["max_score"],
+                "reason": item["reason"],
+            }
+        )
+    return focus_items
+
+
+def render_dimension_score_rows(result: dict) -> List[str]:
+    rows = []
+    for item in result["or_part"]["dimension_scores"]:
+        rows.append(f"| OR | {item['name']} | {format_score(item['score'], item['max_score'])} |")
+    for dr_part in result["dr_parts"]:
+        subject = f"DR `{dr_part['dr_id']} {dr_part['dr_name']}`"
+        for item in dr_part["dimension_scores"]:
+            rows.append(f"| {subject} | {item['name']} | {format_score(item['score'], item['max_score'])} |")
+    for item in result["decomposition_quality"]["dimension_scores"]:
+        rows.append(f"| 分解与追踪 | {item['name']} | {format_score(item['score'], item['max_score'])} |")
     return rows
+
+
+def dimension_focus_sort_key(item: dict) -> tuple:
+    score = item.get("score")
+    max_score = item.get("max_score")
+    if score is None or not max_score:
+        return (float("inf"), float("inf"), str(item.get("scope", "")), str(item.get("name", "")))
+    return (
+        float(score) / float(max_score),
+        float(score),
+        str(item.get("scope", "")),
+        str(item.get("name", "")),
+    )
+
+
+def render_lowest_dimension_explanations(result: dict, limit: int = 3) -> List[str]:
+    candidates = [
+        item
+        for item in collect_dimension_focus_items(result)
+        if item.get("score") is not None and item.get("max_score") not in (None, 0)
+    ]
+    candidates.sort(key=dimension_focus_sort_key)
+    if not candidates:
+        return ["- 无可解释的维度明细。"]
+
+    lines = []
+    for index, item in enumerate(candidates[:limit], start=1):
+        lines.append(
+            f"{index}. {item['scope']} `{item['subject']}` / {item['name']}: "
+            f"{format_score(item['score'], item['max_score'])}"
+        )
+        lines.append(f"   - 扣分说明: {item['reason'] or '未提供最低分说明'}")
+    return lines
 
 
 def render_list_or_none(items: Sequence[str]) -> List[str]:
     if not items:
         return ["- 无"]
     return [f"- {item}" for item in items]
-
-
-def build_priority_actions(results: Sequence[dict]) -> Dict[str, List[str]]:
-    buckets = {"高": Counter(), "中": Counter(), "低": Counter()}
-    for result in results:
-        score = float(result["or_total_score"] or 0)
-        bucket = "低"
-        if score < 60 or result["review_decision"]["blocking_issues"]:
-            bucket = "高"
-        elif score < 75:
-            bucket = "中"
-        for action in result["revision_actions"]:
-            buckets[bucket][action] += 1
-    return {
-        level: [f"{item}（{count}次）" for item, count in counter.most_common(5)] or ["无"]
-        for level, counter in buckets.items()
-    }
 
 
 def render_report(review_packet: Dict[str, object], results: Sequence[dict]) -> str:
@@ -794,7 +878,6 @@ def render_report(review_packet: Dict[str, object], results: Sequence[dict]) -> 
     all_evidence = [item for result in results for item in result["key_evidence"]]
     all_blocking_issues = [item for result in results for item in result["review_decision"]["blocking_issues"]]
     all_result_warnings = [item for result in results for item in result.get("result_warnings", [])]
-    priority_actions = build_priority_actions(results)
     warning_count = sum(1 for result in results if result.get("result_warnings"))
 
     lines = []
@@ -855,9 +938,14 @@ def render_report(review_packet: Dict[str, object], results: Sequence[dict]) -> 
             f"- 需求分解与追踪质量得分: {format_score(result['decomposition_quality']['score'], 20)}"
         )
         lines.append("")
-        lines.append("| 部分/维度 | 分数 | 说明 |")
-        lines.append("| --- | ---: | --- |")
-        lines.extend(render_dimension_rows(result))
+        lines.append("全量维度分数表：")
+        lines.append("")
+        lines.append("| 对象 | 维度 | 分数 |")
+        lines.append("| --- | --- | ---: |")
+        lines.extend(render_dimension_score_rows(result))
+        lines.append("")
+        lines.append("最低分维度说明：")
+        lines.extend(render_lowest_dimension_explanations(result))
         lines.append("")
         lines.append("关键证据：")
         lines.extend(render_list_or_none(result["key_evidence"]))
@@ -874,28 +962,7 @@ def render_report(review_packet: Dict[str, object], results: Sequence[dict]) -> 
         lines.append("缺失项：")
         lines.extend(render_list_or_none(result["missing_items"]))
         lines.append("")
-        lines.append("修改建议：")
-        if result["revision_actions"]:
-            for action_index, action in enumerate(result["revision_actions"], start=1):
-                lines.append(f"{action_index}. {action}")
-        else:
-            lines.append("1. 无")
-        lines.append("")
-    lines.append("## 4. 优先级建议")
-    lines.append("")
-    lines.append("高优先级：")
-    for item in priority_actions["高"]:
-        lines.append(f"- {item}")
-    lines.append("")
-    lines.append("中优先级：")
-    for item in priority_actions["中"]:
-        lines.append(f"- {item}")
-    lines.append("")
-    lines.append("低优先级：")
-    for item in priority_actions["低"]:
-        lines.append(f"- {item}")
-    lines.append("")
-    lines.append("## 5. 附录")
+    lines.append("## 4. 附录")
     lines.append("")
     lines.append("- 维度定义摘要:")
     for item in packet_builder.DEFAULT_DIMENSIONS:

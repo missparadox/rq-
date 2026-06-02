@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import importlib.util
 import json
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,6 +194,12 @@ RED_LINE_RULES = [
     },
 ]
 
+COMPACT_EVIDENCE_BOUNDARIES = [
+    "OR四维仅使用OR核心字段和OR附加字段评分；DR细节不得补高OR，DR仅用于DR评分和OR-DR分解/映射。",
+    "OR-用户语言描述：看OR是否以需求侧可理解的语言表达诉求；若主要是纯技术实现或方案细节，<=6/12。",
+    "OR-约束和限制：看OR是否说明需求成立的范围、前提或限制；功能写得清楚但没有边界，<=2/6。",
+]
+
 COMPACT_DIMENSION_ANCHORS = {
     "or_user_language": "满足=用户需求清楚；缺失=无法识别用户需求",
     "or_scenario": "满足=角色/触发/环境明确；缺失=只有抽象能力",
@@ -277,8 +283,17 @@ def grade_from_score(score: float | int | None) -> str | None:
     if score is None:
         return None
     score_value = float(score)
-    for band in GRADING_BANDS:
-        if band["min_score"] <= score_value <= band["max_score"]:
+    ordered_bands = sorted(GRADING_BANDS, key=lambda band: float(band["min_score"]))
+    for index, band in enumerate(ordered_bands):
+        min_score = float(band["min_score"])
+        if score_value < min_score:
+            continue
+        next_band = ordered_bands[index + 1] if index + 1 < len(ordered_bands) else None
+        if next_band is None:
+            if score_value <= float(band["max_score"]):
+                return str(band["grade"])
+            return None
+        if score_value < float(next_band["min_score"]):
             return str(band["grade"])
     return None
 
@@ -321,6 +336,7 @@ def build_compact_rules(dimensions: Sequence[Dict[str, object]]) -> Dict[str, ob
             "若文本仅引用外部需求、时序图或“如下图”，但当前包内未闭环，应按信息缺失处理。",
             "所有维度都必须返回，score 必须是数字；不允许输出 N/A。若证据不足或不适合作为独立要求呈现，直接给低分或 0 分并说明原因。",
         ],
+        "evidence_boundaries": list(COMPACT_EVIDENCE_BOUNDARIES),
         "red_line_rules": [dict(rule) for rule in RED_LINE_RULES],
         "grading_bands": [dict(band) for band in GRADING_BANDS],
     }
@@ -340,14 +356,13 @@ def build_expected_output_schema(score_weights: Dict[str, int]) -> Dict[str, obj
             "triggered_red_line_rules",
             "key_evidence",
             "missing_items",
-            "revision_actions",
         ],
         "optional_but_supported": [],
         "notes": {
             "calculated_fields": "不输出汇总分或等级；聚合脚本将依据维度分重算 OR、DR平均、分解质量、总分和等级。",
-            "lists": "blocking_issues、key_evidence、missing_items、revision_actions 各最多2条；无内容写“无”。",
+            "lists": "blocking_issues、key_evidence、missing_items 各最多2条；无内容写“无”。",
             "dimension_scores": "所有维度必须完整返回，score 只能是数字；不允许使用 N/A/null 代替维度分数。",
-            "dimension_reasons": "每个维度理由只写一个短证据短语，建议不超过20个汉字。",
+            "dimension_reasons": "全量维度只返回分数；仅对得分率最低的2-3个维度单独说明。",
         },
     }
 
@@ -378,7 +393,10 @@ def missing_runtime_dependencies(path: Path) -> List[str]:
 
 def dependency_install_hint(packages: Sequence[str]) -> str:
     joined = " ".join(packages)
-    return f"python3 -m pip install {joined}"
+    executable = sys.executable or "python"
+    if " " in executable and not (executable.startswith('"') and executable.endswith('"')):
+        executable = f'"{executable}"'
+    return f"{executable} -m pip install {joined}"
 
 
 def ensure_runtime_dependencies(path: Path) -> None:
@@ -461,43 +479,11 @@ def read_json(path: Path) -> ReadResult:
     )
 
 
-def read_csv(path: Path) -> ReadResult:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if reader.fieldnames is None:
-            return ReadResult(
-                records=[],
-                source_info={
-                    "input_format": path.suffix.lower().lstrip("."),
-                },
-            )
-        records = []
-        for idx, item in enumerate(reader, start=1):
-            grouped = filter_grouped_fields(
-                {
-                    str(key): ["" if value is None else str(value)]
-                    for key, value in item.items()
-                    if key is not None
-                }
-            )
-            if not any(clean_text(value) for values in grouped.values() for value in values):
-                continue
-            records.append(RowRecord(index=idx, grouped=grouped))
-    return ReadResult(
-        records=records,
-        source_info={
-            "input_format": path.suffix.lower().lstrip("."),
-        },
-    )
-
-
 def read_records(path: Path) -> ReadResult:
     ensure_runtime_dependencies(path)
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xlsm"}:
         return read_excel(path)
-    if suffix == ".csv":
-        return read_csv(path)
     if suffix == ".json":
         return read_json(path)
     raise SystemExit(f"不支持的输入格式: {suffix}")
@@ -773,7 +759,6 @@ def build_per_or_packets(review_packet: Dict[str, object]) -> Dict[str, object]:
             "triggered_red_line_rules",
             "key_evidence",
             "missing_items",
-            "revision_actions",
             "blocking_issues",
         ],
         "dimension_line_patterns": [
@@ -936,7 +921,12 @@ def render_single_or_packet_markdown(or_packet: Dict[str, object]) -> str:
     lines.append("")
     lines.append("- 总分: `OR(40) + DR平均(40) + 分解(20)`；逐维评分，汇总分和等级由脚本重算。")
     lines.append("- 证据: 只按本包显式内容；外部引用或缺失图示按信息缺失；所有维度必须返回数字分。")
-    lines.append("- 输出: 仅输出下方 tagged 结果；每条 `<短证据>` 建议不超过20字；结论一句话；各列表最多2条，无则写 `- 无`。")
+    lines.append("- 输出: 仅输出下方 tagged 结果；全量维度只返回分数；仅对得分率最低的2-3个维度单独说明；结论一句话；各列表最多2条，无则写 `- 无`。")
+    lines.append("")
+    lines.append("### 证据边界")
+    lines.append("")
+    for boundary in or_packet["compact_rules"]["evidence_boundaries"]:
+        lines.append(f"- {boundary}")
     lines.append("")
     _append_compact_dimension_anchors(lines, or_packet)
     lines.append("")
@@ -987,19 +977,23 @@ def render_single_or_packet_markdown(or_packet: Dict[str, object]) -> str:
     lines.append("[OR_RESULT_START]")
     lines.append(f"or_id: {unit['id']}")
     lines.append(f"or_name: {unit['name']}")
-    lines.append("or_dimension.OR-用户语言描述: <0-12>/<12> | <短证据>")
-    lines.append("or_dimension.OR-应用场景: <0-12>/<12> | <短证据>")
-    lines.append("or_dimension.OR-用户价值: <0-10>/<10> | <短证据>")
-    lines.append("or_dimension.OR-约束和限制: <0-6>/<6> | <短证据>")
+    lines.append("or_dimension.OR-用户语言描述: <0-12>/<12>")
+    lines.append("or_dimension.OR-应用场景: <0-12>/<12>")
+    lines.append("or_dimension.OR-用户价值: <0-10>/<10>")
+    lines.append("or_dimension.OR-约束和限制: <0-6>/<6>")
     for dr_item in unit["dr_items"]:
-        lines.append(f"dr_dimension.{dr_item['id']}.DR-安全分析: <0-5>/<5> | <短证据>")
-        lines.append(f"dr_dimension.{dr_item['id']}.DR-技术描述: <0-10>/<10> | <短证据>")
-        lines.append(f"dr_dimension.{dr_item['id']}.DR-可测试性: <0-10>/<10> | <短证据>")
-        lines.append(f"dr_dimension.{dr_item['id']}.DR-无歧义性: <0-8>/<8> | <短证据>")
-        lines.append(f"dr_dimension.{dr_item['id']}.DR-异常描述: <0-7>/<7> | <短证据>")
-    lines.append("cross_dimension.需求分解完整性: <0-7>/<7> | <短证据>")
-    lines.append("cross_dimension.需求分解边界清晰度: <0-6>/<6> | <短证据>")
-    lines.append("cross_dimension.需求映射一致性: <0-7>/<7> | <短证据>")
+        lines.append(f"dr_dimension.{dr_item['id']}.DR-安全分析: <0-5>/<5>")
+        lines.append(f"dr_dimension.{dr_item['id']}.DR-技术描述: <0-10>/<10>")
+        lines.append(f"dr_dimension.{dr_item['id']}.DR-可测试性: <0-10>/<10>")
+        lines.append(f"dr_dimension.{dr_item['id']}.DR-无歧义性: <0-8>/<8>")
+        lines.append(f"dr_dimension.{dr_item['id']}.DR-异常描述: <0-7>/<7>")
+    lines.append("cross_dimension.需求分解完整性: <0-7>/<7>")
+    lines.append("cross_dimension.需求分解边界清晰度: <0-6>/<6>")
+    lines.append("cross_dimension.需求映射一致性: <0-7>/<7>")
+    lines.append("lowest_dimension_explanations:")
+    lines.append("- OR.<维度名>: <score>/<max> | <扣分说明>")
+    lines.append("- DR.<dr_id>.<维度名>: <score>/<max> | <扣分说明>")
+    lines.append("- CROSS.<维度名>: <score>/<max> | <扣分说明>")
     lines.append("review_conclusion: <一句话结论>")
     lines.append("triggered_red_line_rules:")
     lines.append("- <规则编号或无>")
@@ -1009,8 +1003,6 @@ def render_single_or_packet_markdown(or_packet: Dict[str, object]) -> str:
     lines.append("- <证据1>")
     lines.append("missing_items:")
     lines.append("- <缺失项1>")
-    lines.append("revision_actions:")
-    lines.append("1. <建议1>")
     lines.append("[OR_RESULT_END]")
     lines.append("```")
     lines.append("")

@@ -189,11 +189,29 @@ PYTHONPATH=backend python3 -m app.runners.external_requirements_runner \
   --review-mode full
 ```
 
+Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "backend"
+py -3 -m app.runners.external_requirements_runner `
+  --input "requirements.xlsm" `
+  --review-mode full
+```
+
 Split-per-OR prompt flow:
 
 ```bash
 PYTHONPATH=backend python3 -m app.runners.external_requirements_runner \
   --input requirements.xlsm \
+  --review-mode split
+```
+
+Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "backend"
+py -3 -m app.runners.external_requirements_runner `
+  --input "requirements.xlsm" `
   --review-mode split
 ```
 
@@ -215,6 +233,14 @@ The packet builder script is:
 ```bash
 python3 .agents/skills/requirements-evaluator/scripts/evaluate_requirements.py \
   --input /path/to/input-file.xlsx \
+  --packet-scope all-or
+```
+
+Windows PowerShell:
+
+```powershell
+py -3 .\.agents\skills\requirements-evaluator\scripts\evaluate_requirements.py `
+  --input "C:\path\to\input-file.xlsx" `
   --packet-scope all-or
 ```
 
@@ -267,6 +293,14 @@ After the per-OR model outputs are ready, merge them locally:
 python3 .agents/skills/requirements-evaluator/scripts/aggregate_or_results.py \
   --input /path/to/input-file.xlsx \
   --results-dir /path/to/model-results
+```
+
+Windows PowerShell:
+
+```powershell
+py -3 .\.agents\skills\requirements-evaluator\scripts\aggregate_or_results.py `
+  --input "C:\path\to\input-file.xlsx" `
+  --results-dir "reports\<input-file-stem>\results"
 ```
 
 If `--results-dir` and `--output` are omitted, the aggregator defaults to:

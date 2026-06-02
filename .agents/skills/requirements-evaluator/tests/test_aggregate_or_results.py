@@ -103,8 +103,14 @@ revision_actions:
         self.assertIn("### OR 1: DOR-1 网络检测与诊断", report)
         self.assertIn("74/100", report)
         self.assertIn("纳入评分的需求分类: 功能", report)
+        self.assertIn("全量维度分数表：", report)
+        self.assertIn("| OR | OR-约束和限制 | 4/6 |", report)
+        self.assertIn("| DR `DDR-1 Ping检测` | DR-安全分析 | 3/5 |", report)
+        self.assertIn("最低分维度说明：", report)
         self.assertIn("约束边界不足", report)
-        self.assertIn("增补失败条件与异常处理动作", report)
+        self.assertNotIn("| OR-约束和限制 | 4/6 | 约束较少", report)
+        self.assertNotIn("修改建议：", report)
+        self.assertNotIn("增补失败条件与异常处理动作", report)
 
     def test_compact_tagged_result_recomputes_scores_without_aggregate_fields(self):
         rows = [
@@ -121,18 +127,22 @@ revision_actions:
         tagged_result = """[OR_RESULT_START]
 or_id: DOR-1
 or_name: 网络检测与诊断
-or_dimension.OR-用户语言描述: 8/12 | 需求可识别
-or_dimension.OR-应用场景: 9/12 | 场景较明确
-or_dimension.OR-用户价值: 7/10 | 价值有描述
-or_dimension.OR-约束和限制: 4/6 | 约束较少
-dr_dimension.DDR-1.DR-安全分析: 3/5 | 安全约束较少
-dr_dimension.DDR-1.DR-技术描述: 8/10 | 主流程明确
-dr_dimension.DDR-1.DR-可测试性: 8/10 | 可导出测试
-dr_dimension.DDR-1.DR-无歧义性: 6/8 | 边界较清楚
-dr_dimension.DDR-1.DR-异常描述: 5/7 | 异常覆盖不足
-cross_dimension.需求分解完整性: 5/7 | 主能力覆盖
-cross_dimension.需求分解边界清晰度: 4/6 | 边界较清楚
-cross_dimension.需求映射一致性: 7/7 | 映射一致
+or_dimension.OR-用户语言描述: 8/12
+or_dimension.OR-应用场景: 9/12
+or_dimension.OR-用户价值: 7/10
+or_dimension.OR-约束和限制: 4/6
+dr_dimension.DDR-1.DR-安全分析: 3/5
+dr_dimension.DDR-1.DR-技术描述: 8/10
+dr_dimension.DDR-1.DR-可测试性: 8/10
+dr_dimension.DDR-1.DR-无歧义性: 6/8
+dr_dimension.DDR-1.DR-异常描述: 5/7
+cross_dimension.需求分解完整性: 5/7
+cross_dimension.需求分解边界清晰度: 4/6
+cross_dimension.需求映射一致性: 7/7
+lowest_dimension_explanations:
+- DR.DDR-1.DR-安全分析: 3/5 | 当前DR只说明Ping检测动作，没有给出安全控制、权限限制或安全边界。
+- OR.OR-约束和限制: 4/6 | OR只描述提供网络检测能力，缺少适用范围、输入限制和运行约束。
+- CROSS.需求分解边界清晰度: 4/6 | 只有一个DR时边界可识别，但OR中的网络检测能力没有拆出异常和展示职责。
 review_conclusion: 可进入评审，需补异常细节。
 triggered_red_line_rules:
 - 无
@@ -168,7 +178,20 @@ revision_actions:
             report = output_path.read_text(encoding="utf-8")
 
         self.assertIn("74/100", report)
+        self.assertIn("当前DR只说明Ping检测动作", report)
+        self.assertIn("OR只描述提供网络检测能力", report)
         self.assertNotIn("结果缺少以下DR", report)
+        self.assertNotIn("未提供最低分说明", report)
+
+    def test_fractional_scores_map_to_continuous_grade_bands(self):
+        self.assertEqual(self.module.packet_builder.grade_from_score(59.7), "待改进")
+        self.assertEqual(self.module.packet_builder.grade_from_score(60), "合格")
+        self.assertEqual(self.module.packet_builder.grade_from_score(74.5), "合格")
+        self.assertEqual(self.module.packet_builder.grade_from_score(75), "良好")
+        self.assertEqual(self.module.packet_builder.grade_from_score(89.9), "良好")
+        self.assertEqual(self.module.packet_builder.grade_from_score(90), "优秀")
+        self.assertEqual(self.module.packet_builder.grade_from_score(100), "优秀")
+        self.assertIsNone(self.module.packet_builder.grade_from_score(100.1))
 
     def test_parse_json_result_from_fenced_block(self):
         rows = [
@@ -257,9 +280,11 @@ revision_actions:
 
         self.assertIn("80/100", report)
         self.assertIn("技术描述较完整，异常覆盖仍需加强", report)
-        self.assertIn("补充失败恢复流程", report)
+        self.assertIn("最低分维度说明：", report)
+        self.assertIn("OR `网络检测与诊断` / OR-应用场景: 8/12", report)
+        self.assertNotIn("补充失败恢复流程", report)
         self.assertNotIn("DR汇总结论", report)
-        self.assertIn("强项在", report)
+        self.assertNotIn("强项在", report)
 
     def test_report_falls_back_to_tagged_dr_scores_when_dr_dimensions_are_missing(self):
         rows = [
@@ -323,7 +348,8 @@ revision_actions:
         self.assertIn("- DR平均分: 30/40", report)
         self.assertIn("- OR总得分: 74/100", report)
         self.assertIn("DR DDR-1 总分缺少完整维度明细，回退使用模型给出的DR总分", report)
-        self.assertIn("该DR已返回总分，但缺少可解释的维度细项", report)
+        self.assertIn("最低分维度说明：", report)
+        self.assertNotIn("该DR已返回总分，但缺少可解释的维度细项", report)
 
     def test_report_keeps_aggregating_when_a_dr_score_is_missing(self):
         rows = [
@@ -418,7 +444,7 @@ revision_actions:
         self.assertIn("结果完整性提示: 1 个OR存在DR评分覆盖异常", report)
         self.assertIn("结果缺少以下DR评分: DDR-2", report)
         self.assertIn("`DDR-2 Telnet检测`: N/A/40", report)
-        self.assertIn("该DR评分结果不完整", report)
+        self.assertNotIn("该DR评分结果不完整", report)
         self.assertIn("总体平均分: N/A/100", report)
 
 
